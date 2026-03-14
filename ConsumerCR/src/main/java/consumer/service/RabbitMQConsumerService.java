@@ -51,9 +51,9 @@ public class RabbitMQConsumerService {
                 try {
                     Transaccion transaccion = objectMapper.readValue(mensajeJson, Transaccion.class);
 
-                    String idOriginal    = transaccion.getIdTransaccion();
-                    String uuid          = UUID.randomUUID().toString();
-                    String idModificado  = idOriginal + "-" + uuid;
+                    String idOriginal   = transaccion.getIdTransaccion();
+                    String uuid         = UUID.randomUUID().toString();
+                    String idModificado = idOriginal + "-" + uuid;
                     transaccion.setIdTransaccion(idModificado);
 
                     transaccion.setNombre(Configuracion.ESTUDIANTE_NOMBRE);
@@ -62,21 +62,46 @@ public class RabbitMQConsumerService {
 
                     System.out.println("[ConsumerCR] ID modificado: " + idModificado);
 
-                    boolean exito = apiPostService.guardarTransaccion(transaccion);
+                    // Validamos el monto
+                    if (transaccion.getMonto() > 4000.00) {
 
-                    if (exito) {
-
+                    // Monto mayor a Q.4000 se va a cola_rechazados
+                        channel.queueDeclare("cola_rechazados", true, false, false, null);
+                        String mensajeRechazado = objectMapper.writeValueAsString(transaccion);
+                        channel.basicPublish("", "cola_rechazados", null, mensajeRechazado.getBytes("UTF-8"));
                         channel.basicAck(deliveryTag, false);
-                        System.out.println("[ConsumerCR] ACK enviado. Transaccion guardada.");
+
+                        System.out.println("------------------------------------------");
+                        System.out.println("[ConsumerCR] >>> TRANSACCION RECHAZADA <<<");
+                        System.out.println("[ConsumerCR] idTransaccion : " + idModificado);
+                        System.out.println("[ConsumerCR] Monto         : Q." + transaccion.getMonto());
+                        System.out.println("[ConsumerCR] Estado        : RECHAZADA");
+                        System.out.println("[ConsumerCR] Enviada a     : cola_rechazados");
+                        System.out.println("------------------------------------------");
+
                     } else {
 
-                        channel.basicNack(deliveryTag, false, true);
-                        System.err.println("[ConsumerCR] NACK - mensaje reencolado en [" + banco + "]");
+                        // Monto valido, flujo normal al POST
+                        boolean exito = apiPostService.guardarTransaccion(transaccion);
+
+                        System.out.println("------------------------------------------");
+                        System.out.println("[ConsumerCR] idTransaccion : " + idModificado);
+                        System.out.println("[ConsumerCR] Monto         : Q." + transaccion.getMonto());
+                        System.out.println("[ConsumerCR] Atendida por  : " + Thread.currentThread().getName());
+                        System.out.println("[ConsumerCR] ID procesado  : " + idModificado);
+
+                        if (exito) {
+                            channel.basicAck(deliveryTag, false);
+                            System.out.println("[ConsumerCR] Estado        : ACEPTADA - Transaccion guardada :)");
+                        } else {
+                            channel.basicNack(deliveryTag, false, true);
+                            System.out.println("[ConsumerCR] Estado        : RECHAZADA - reencolado en [" + banco + "]");
+                        }
+                        System.out.println("------------------------------------------");
                     }
 
                 } catch (Exception e) {
                     System.err.println("[ConsumerCR] Upss Error procesando mensaje: " + e.getMessage());
-
                     channel.basicNack(deliveryTag, false, true);
                 }
             };
